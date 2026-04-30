@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>untitled</title>
+    <style>
+        :root { --neon: #00ffcc; --pink: #ff0077; --dark: #050508; --gold: #ffcc00; }
+        body { background: var(--dark); color: white; font-family: 'Courier New', monospace; margin: 0; overflow: hidden; user-select: none; }
+        
+        #tab-bar { display: flex; justify-content: center; background: #000; border-bottom: 2px solid var(--neon); padding: 10px; gap: 10px; }
+        .tab { padding: 8px 15px; border: 1px solid #333; cursor: pointer; border-radius: 5px; transition: 0.2s; font-size: 0.9rem; }
+        .tab.active { background: var(--neon); color: black; font-weight: bold; }
+        .tab.flash-tab { border-color: var(--gold); color: var(--gold); }
+
+        #viewport-container { height: calc(100vh - 60px); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        
+        #game-viewport { 
+            width: 640px; height: 360px; border: 4px solid white; position: relative; 
+            overflow: hidden; background: #000; box-shadow: 0 0 30px rgba(0, 255, 204, 0.2);
+        }
+        canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+
+        #hud-container { width: 640px; }
+        .hud { display: flex; justify-content: space-between; margin-bottom: 5px; color: var(--neon); font-size: 1.2rem; }
+        #timer-wrap { height: 8px; background: #222; margin-bottom: 15px; border-radius: 4px; overflow: hidden; }
+        #timer-fill { height: 100%; background: var(--pink); width: 100%; }
+
+        #overlay { 
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.9); 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 50; text-align: center;
+        }
+        #lose-screen { 
+            position: absolute; width: 100%; height: 100%; background: rgba(150,0,0,0.95); 
+            display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 60; 
+        }
+        
+        button { padding: 12px 25px; background: var(--pink); color: white; border: none; cursor: pointer; font-weight: bold; border-radius: 4px; font-family: inherit; }
+        .btn-gold { background: var(--gold); color: black; margin-top: 15px; box-shadow: 0 0 10px var(--gold); }
+        .btn-gold:hover { transform: scale(1.05); background: #fff; }
+        .death-text { font-size: 3rem; color: white; text-shadow: 3px 3px #000; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+
+<div id="tab-bar"></div>
+
+<div id="viewport-container">
+    <div id="hud-container">
+        <div class="hud">
+            <span id="label">READY?</span>
+            <span>SCORE: <b id="score">0</b></span>
+        </div>
+        <div id="timer-wrap"><div id="timer-fill"></div></div>
+    </div>
+
+    <div id="game-viewport">
+        <div id="overlay">
+            <h1 id="title-card">GAME START</h1>
+            <button id="play-btn" onclick="startBlitz()">START BLITZ</button>
+            <div id="ruffle-redirect" style="display:none;">
+                <p>Flash Vault</p>
+                <button class="btn-gold" onclick="location.href='./ruffle/ruffle.html'">OPEN RUFFLE</button>
+            </div>
+        </div>
+
+        <div id="lose-screen">
+            <div class="death-text">GAME OVER</div>
+            <button onclick="retry()">RETRY</button>
+        </div>
+
+        <canvas id="gameCanvas" width="640" height="360"></canvas>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const timerFill = document.getElementById('timer-fill');
+    const loseScreen = document.getElementById('lose-screen');
+    const hudContainer = document.getElementById('hud-container');
+    const playBtn = document.getElementById('play-btn');
+    const ruffleRedirect = document.getElementById('ruffle-redirect');
+    
+    let score = 0, time = 100, active = false;
+    let mainLoop = null, currentIdx = -1;
+
+    const scenes = [
+        { name: "PONG", icon: "🏓", logic: runPong },
+        { name: "PAC-MAN", icon: "👾", logic: runPacman },
+        { name: "SNAKE", icon: "🐍", logic: runSnake },
+        { name: "BURGER", icon: "🍔", logic: runBurger },
+        { name: "RUFFLE", icon: "⚡", logic: null }
+    ];
+
+    const bar = document.getElementById('tab-bar');
+    scenes.forEach((s, i) => {
+        const t = document.createElement('div');
+        t.className = 'tab' + (s.name === "RUFFLE" ? " flash-tab" : "");
+        t.innerHTML = `${s.icon} ${s.name}`;
+        t.onclick = () => selectTab(i);
+        bar.appendChild(t);
+    });
+
+    function selectTab(i) {
+        stopEverything();
+        currentIdx = i;
+        document.querySelectorAll('.tab').forEach((t, idx) => t.classList.toggle('active', idx === i));
+        document.getElementById('title-card').innerText = scenes[i].name;
+        
+        const isFlash = scenes[i].name === "RUFFLE";
+        document.getElementById('overlay').style.display = 'flex';
+        loseScreen.style.display = 'none';
+
+        if(isFlash) {
+            hudContainer.style.visibility = 'hidden';
+            playBtn.style.display = 'none';
+            ruffleRedirect.style.display = 'block';
+        } else {
+            hudContainer.style.visibility = 'visible';
+            playBtn.style.display = 'block';
+            ruffleRedirect.style.display = 'none';
+        }
+    }
+
+    function startBlitz() {
+        document.getElementById('overlay').style.display = 'none';
+        loseScreen.style.display = 'none';
+        score = 0; time = 100; active = true;
+        document.getElementById('score').innerText = score;
+        document.getElementById('label').innerText = scenes[currentIdx].name;
+        scenes[currentIdx].logic();
+        
+        mainLoop = setInterval(() => {
+            time -= 0.5;
+            timerFill.style.width = time + '%';
+            if(time <= 0) { triggerLose(); }
+        }, 100);
+    }
+
+    function triggerLose() {
+        active = false;
+        clearInterval(mainLoop);
+        loseScreen.style.display = 'flex';
+    }
+
+    function retry() { selectTab(currentIdx); }
+
+    function stopEverything() {
+        clearInterval(mainLoop);
+        active = false;
+        ctx.clearRect(0, 0, 640, 360);
+        window.onkeydown = null;
+        canvas.onmousemove = null;
+    }
+
+    function addScore(n = 1) { 
+        if(!active) return;
+        score += n; 
+        document.getElementById('score').innerText = score; 
+    }
+
+    // --- GAME LOGIC ---
+
+    function runPong() {
+        let py = 150, by = 180, bx = 320, bdx = 5, bdy = 3;
+        canvas.onmousemove = (e) => py = e.offsetY - 40;
+        const g = setInterval(() => {
+            if(!active) return clearInterval(g);
+            bx += bdx; by += bdy;
+            if(by < 0 || by > 360) bdy *= -1;
+            if(bx > 640) bdx *= -1;
+            if(bx < 20) {
+                if(by > py && by < py + 80) { bdx *= -1.1; addScore(1); }
+                else triggerLose();
+            }
+            ctx.fillStyle = "black"; ctx.fillRect(0,0,640,360);
+            ctx.fillStyle = "white"; ctx.fillRect(10, py, 10, 80);
+            ctx.fillRect(bx-5, by-5, 10, 10);
+        }, 20);
+    }
+
+    function runPacman() {
+        let px = 320, py = 180, dots = [], ghosts = [];
+        for(let i=0; i<10; i++) dots.push({x: Math.random()*600+20, y: Math.random()*320+20});
+        for(let i=0; i<3; i++) ghosts.push({x: Math.random()*640, y: Math.random()*360, dx: 2, dy: 2});
+        window.onkeydown = (e) => {
+            if(e.key === "ArrowUp") py -= 20; if(e.key === "ArrowDown") py += 20;
+            if(e.key === "ArrowLeft") px -= 20; if(e.key === "ArrowRight") px += 20;
+        };
+        const g = setInterval(() => {
+            if(!active) return clearInterval(g);
+            ctx.fillStyle = "black"; ctx.fillRect(0,0,640,360);
+            ctx.fillStyle = "yellow"; ctx.beginPath(); ctx.arc(px, py, 15, 0.2 * Math.PI, 1.8 * Math.PI); ctx.lineTo(px, py); ctx.fill();
+            ctx.fillStyle = "white";
+            dots.forEach((d, i) => {
+                ctx.fillRect(d.x, d.y, 6, 6);
+                if(Math.abs(px-d.x)<20 && Math.abs(py-d.y)<20) { dots.splice(i, 1); addScore(10); dots.push({x: Math.random()*600+20, y: Math.random()*320+20}); }
+            });
+            ctx.fillStyle = "red";
+            ghosts.forEach(gh => {
+                gh.x += gh.dx; gh.y += gh.dy;
+                if(gh.x<0 || gh.x>640) gh.dx *= -1; if(gh.y<0 || gh.y>360) gh.dy *= -1;
+                ctx.fillText("👻", gh.x, gh.y);
+                if(Math.abs(px-gh.x)<20 && Math.abs(py-gh.y)<20) triggerLose();
+            });
+            if(px<0 || px>640 || py<0 || py>360) triggerLose();
+        }, 30);
+    }
+
+    function runSnake() {
+        let x=320, y=180, dx=20, dy=0, fx=100, fy=100, tail=[];
+        window.onkeydown = (e) => {
+            if(e.key==="ArrowUp" && dy===0) { dx=0; dy=-20; }
+            if(e.key==="ArrowDown" && dy===0) { dx=0; dy=20; }
+            if(e.key==="ArrowLeft" && dx===0) { dx=-20; dy=0; }
+            if(e.key==="ArrowRight" && dx===0) { dx=20; dy=0; }
+        };
+        const g = setInterval(() => {
+            if(!active) return clearInterval(g);
+            tail.push({x, y});
+            while(tail.length > (score/2) + 1) tail.shift();
+            x += dx; y += dy;
+            if(x<0||x>=640||y<0||y>=360) return triggerLose();
+            if(Math.abs(x-fx)<15 && Math.abs(y-fy)<15) { addScore(2); fx=20+Math.floor(Math.random()*30)*20; fy=20+Math.floor(Math.random()*16)*20; }
+            ctx.fillStyle="black"; ctx.fillRect(0,0,640,360);
+            ctx.fillStyle="red"; ctx.fillRect(fx,fy,18,18);
+            ctx.fillStyle="var(--neon)";
+            tail.forEach(t => ctx.fillRect(t.x, t.y, 18, 18));
+            ctx.fillRect(x,y,18,18);
+        }, 80);
+    }
+
+    function runBurger() {
+        let px = 300, items = [];
+        canvas.onmousemove = (e) => px = e.offsetX - 40;
+        const g = setInterval(() => {
+            if(!active) return clearInterval(g);
+            if(Math.random() < 0.1) items.push({x:Math.random()*600, y:0});
+            ctx.fillStyle="black"; ctx.fillRect(0,0,640,360);
+            ctx.fillStyle="white"; ctx.fillRect(px, 340, 80, 10);
+            ctx.font="30px Arial";
+            items.forEach((it, i) => {
+                it.y += 5; ctx.fillText("🍔", it.x, it.y);
+                if(it.y > 330 && it.x > px-20 && it.x < px+80) { items.splice(i,1); addScore(1); }
+                else if(it.y > 360) { items.splice(i,1); } // Drops don't end game
+            });
+        }, 30);
+    }
+
+    selectTab(0);
+</script>
+</body>
+</html>
